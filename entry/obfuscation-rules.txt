@@ -19,6 +19,10 @@
 
 -enable-property-obfuscation
 -enable-toplevel-obfuscation
--enable-filename-obfuscation
+-enable-export-obfuscation
+-enable-bytecode-obfuscation
+
+-enable-property-obfuscation
+-enable-toplevel-obfuscation
 -enable-export-obfuscation
 -enable-bytecode-obfuscation
