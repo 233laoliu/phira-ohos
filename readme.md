@@ -9,6 +9,7 @@
 - **小窗 / 分屏适配**：新增 `WindowModeManager`，按当前窗口形态切换沉浸式与窗口化，窗口尺寸变化时持续跟随（悬浮窗、分屏来回切换均自动生效）；`module.json5` 声明 `supportWindowMode: ['fullscreen', 'split', 'floating']` 与 `preferMultiWindowOrientation: 'landscape'`。
 - **游戏模式**：新增 `GameModeManager`，订阅原生 `interceptor_state` 信号（等价于"正在游玩"），游玩期间保持屏幕常亮等行为。
 - **修复 build-profile 的 SDK 版本写反**：原文件 `targetSdkVersion` / `compatibleSdkVersion` 写反（21 > 20），hvigor 会直接拒绝构建，已交换并加注释。
+- **修复噪域（Noise）谱面无法播放**：带噪域的谱面一进游戏就报 `Shader compile error: 'recorderTint' : undeclared identifier`。根因在 `prpr/src/noise_area/render.rs`：它用字面量 `"void main()\n{"` 往 Unity 反编译出的着色器里注入 `recorderTint` 声明，而 Windows 检出（`core.autocrlf`）把 `.glsl` 变成了 CRLF，`replacen` 静默失配——声明没插进去，使用处却照旧引用，于是编译失败（Linux CI 是 LF，所以这个 bug 只在本地 Windows 构建里出现）。现在 `canvas_shader` / `recorder_shader` / `active_variant` 入口先把行尾归一化成 LF 再做字符串注入，顺带修掉低画质变体里同因的 `find().unwrap()` panic；`.gitattributes` 把 `shaders/**` 钉成 `eol=lf`，并补了一条 CRLF 回归测试。引擎侧改动放在 `233laoliu/PhiraiAd`（上游 `Adai-add/PhiraiAd` @ `a60b49a` 的 fork，只多这一个提交）。
 - **CI 构建**：新增 `.github/workflows/build.yml`，在 GitHub Actions 上自动完成 Rust 交叉编译 `libphira.so`（aarch64-unknown-linux-ohos）+ HAP 打包全流程，产物直接在 workflow run 的 Artifacts 中下载。
 
 ## Thanks
@@ -29,7 +30,9 @@
 ```bash
 # 需要 Rust nightly-2026-09-14 与 OHOS NDK（DevEco Studio 自带：
 # <DevEco>/sdk/default/openharmony/native）
-git clone https://github.com/Adai-add/PhiraiAd.git phiraiad
+# 用 fork 而不是上游：它多一个"着色器行尾归一化"提交，修掉 Windows 下
+# 噪域着色器编译失败（见 What's changed）。
+git clone https://github.com/233laoliu/PhiraiAd.git phiraiad
 cd phiraiad/phira
 cargo +nightly-2026-09-14 build --target aarch64-unknown-linux-ohos --release
 cp target/aarch64-unknown-linux-ohos/release/libphira.so ../../phira-ohos/entry/libs/arm64-v8a/

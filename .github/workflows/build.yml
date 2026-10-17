@@ -18,8 +18,9 @@ env:
   # 6.1.x 的 hvigor 向后兼容工程里的 modelVersion 6.0.0。
   CLI_TOOLS_VERSION: '6.1.1.280'
   # phiraiad（Rust 引擎侧）仓库与分支，对应本地 build-libphira.cmd 使用的版本。
-  # main 当前顶点即 v1.5.2 (a60b49a)。
-  PHIRAAD_REPO: 'Adai-add/PhiraiAd'
+  # 用 233laoliu/PhiraiAd（Adai-add/PhiraiAd @ a60b49a 的 fork），只多一个提交：
+  # 着色器注入前统一行尾，修掉 Windows 检出 CRLF 时噪域着色器编译失败的问题。
+  PHIRAAD_REPO: '233laoliu/PhiraiAd'
   PHIRAAD_REF: 'main'
   RUST_NIGHTLY: 'nightly-2026-09-14'
 
