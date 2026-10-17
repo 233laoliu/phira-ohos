@@ -4,6 +4,8 @@ import { window } from "@kit.ArkUI";
 import { BusinessError } from "@kit.BasicServicesKit";
 import { copyUriToTempFile, executeClearCacheTask } from "../utils/AbilityUtils";
 import { XComponentHolder } from "../utils/XComponentHolder";
+import { WindowModeManager } from "../utils/WindowModeManager";
+import { GameModeManager } from "../utils/GameModeManager";
 
 const DOMAIN = 0x0000;
 const TAG = "Phira-ohos";
@@ -90,16 +92,10 @@ export default class EntryAbility extends UIAbility {
         );
         return;
       }
-      try {
-        windowClass.setWindowDecorVisible(false);
-      } catch (e) {
-        hilog.error(
-          DOMAIN,
-          TAG,
-          "Failed to setWindowDecorVisible. Cause: %{public}s",
-          JSON.stringify(e),
-        );
-      }
+      // 小窗模式 / 分屏适配：由 WindowModeManager 按当前窗口形态切换沉浸式与窗口化，
+      // 并在窗口尺寸变化时持续跟随（悬浮窗、分屏来回切换都能自动生效）。
+      WindowModeManager.bind(windowClass);
+      GameModeManager.attachWindow(windowClass);
       try {
         await windowClass.setWindowKeepScreenOn(true);
       } catch (e) {
@@ -107,17 +103,6 @@ export default class EntryAbility extends UIAbility {
           DOMAIN,
           TAG,
           "Failed to set the screen to be always on. Cause: %{public}s",
-          JSON.stringify(e),
-        );
-      }
-      try {
-        await windowClass.setWindowLayoutFullScreen(true);
-        await windowClass.setWindowSystemBarEnable([]);
-      } catch (e) {
-        hilog.error(
-          DOMAIN,
-          TAG,
-          "Failed to set the window layout to full-screen mode. Cause: %{public}s",
           JSON.stringify(e),
         );
       }

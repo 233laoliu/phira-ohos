@@ -1,4 +1,5 @@
 import { InputDialog } from "../components/InputDialog";
+import { ChartDownloadPanel } from "../components/ChartDownloadPanel";
 import {
   callFilePickerAndProcess,
   callFilePickerSaveFile,
@@ -7,6 +8,8 @@ import {
   startBrowsableAbility,
 } from "../utils/AbilityUtils";
 import { XComponentHolder } from "../utils/XComponentHolder";
+import { GameModeManager } from "../utils/GameModeManager";
+import fs from "@ohos.file.fs";
 import { common } from "@kit.AbilityKit";
 import { InputBoxRequest, InputBoxResponse } from "libphira.so";
 import { mediaquery } from "@kit.ArkUI";
@@ -69,6 +72,8 @@ struct Index {
   @State currentRequest: InputBoxRequest | null = null;
   private inputDialogController: CustomDialogController | null = null;
   @State isPhone: boolean = true;
+  @State showDownloadPanel: boolean = false;
+  @State chartWorkDir: string = "";
   private listener = this.getUIContext().getMediaQuery().matchMediaSync("(max-width: 600vp)");
 
   aboutToAppear(): void {
@@ -77,7 +82,24 @@ struct Index {
     this.listener.on("change", (mediaQueryResult: mediaquery.MediaQueryResult) => {
       this.isPhone = mediaQueryResult.matches;
     });
+    this.prepareChartWorkDir();
+    GameModeManager.prepare(this.context).catch((err: BusinessError) => {
+      console.error("Failed to prepare game mode: " + JSON.stringify(err));
+    });
     this.showCrashDialog();
+  }
+
+  /** 谱面下载暂存目录，缓存目录下建一个子目录便于清理。 */
+  private prepareChartWorkDir(): void {
+    try {
+      const dir = `${this.context.cacheDir}/chart_download`;
+      if (!fs.accessSync(dir)) {
+        fs.mkdirSync(dir, true);
+      }
+      this.chartWorkDir = dir;
+    } catch (err) {
+      console.error("Failed to prepare chart work dir: " + JSON.stringify(err));
+    }
   }
 
   aboutToDisappear(): void {
@@ -96,6 +118,10 @@ struct Index {
   }
 
   onBackPress(): boolean {
+    if (this.showDownloadPanel) {
+      this.showDownloadPanel = false;
+      return true;
+    }
     return this.interceptorState;
   }
 
@@ -175,7 +201,10 @@ struct Index {
       }
       switch (command.action) {
         case "interceptor_state":
+          // 原生引擎只在 GameScene 的 enter / resume 置 true，pause 与退出置 false，
+          // 因此这个信号等价于"正在游玩"，用来驱动游戏模式。
           this.interceptorState = command.state;
+          GameModeManager.setGameplayActive(command.state);
           break;
         case "openurl":
           if (command.payload) {
@@ -183,7 +212,7 @@ struct Index {
           }
           break;
         case "chooseFile":
-          callFilePickerAndProcess(context, this.context, command.isPhoto);
+          this.showImportSourceDialog(context, command.isPhoto);
           break;
         case "request_export":
           if (command.filename) {
@@ -217,6 +246,53 @@ struct Index {
     });
   }
 
+  /** 导入入口：本地文件与在线下载二选一。 */
+  private showImportSourceDialog(context: ESObject, isPhoto: boolean): void {
+    const prompt = this.getUIContext().getPromptAction();
+    prompt
+      .showDialog({
+        title: "导入谱面",
+        message: "选择导入方式",
+        buttons: [
+          { text: "本地文件", color: "#0A59F7", primary: true },
+          { text: "在线下载", color: "#666666" },
+          { text: "取消", color: "#999999" },
+        ],
+      })
+      .then((result) => {
+        if (result.index === 0) {
+          callFilePickerAndProcess(context, this.context, isPhoto);
+          return;
+        }
+        if (result.index === 1 && this.chartWorkDir !== "") {
+          this.showDownloadPanel = true;
+        }
+      })
+      .catch((error: BusinessError) => {
+        console.error("Failed to show import source dialog: " + JSON.stringify(error));
+      });
+  }
+
+  /** 下载完成后走和本地导入完全相同的通道。 */
+  private importDownloadedChart(path: string): void {
+    XComponentHolder.ifPresent((context: ESObject): void => {
+      console.info("Importing downloaded chart: " + path);
+      // 原生侧拿到路径后会直接 File::open，文件不存在只会弹一句"导入失败"，
+      // 这里先挡一道，给个看得懂的提示。
+      if (!fs.accessSync(path)) {
+        console.error("Chart file missing before import: " + path);
+        this.getUIContext().getPromptAction().showToast({
+          message: "谱面文件缺失，无法导入",
+          duration: 2500,
+        });
+        return;
+      }
+      context.setChosenFile(path);
+      context.markAutoImport();
+    });
+    this.showDownloadPanel = false;
+  }
+
   build() {
     Stack({ alignContent: Alignment.Center }) {
       XComponent(this.xComponentAttrs)
@@ -233,6 +309,18 @@ struct Index {
         .focusable(true)
         .defaultFocus(true)
         .constraintSize({ maxWidth: "100%", maxHeight: "100%" })
+
+      if (this.showDownloadPanel) {
+        ChartDownloadPanel({
+          workDir: this.chartWorkDir,
+          onImported: (path: string) => {
+            this.importDownloadedChart(path);
+          },
+          onClose: () => {
+            this.showDownloadPanel = false;
+          },
+        })
+      }
     }.height("100%");
   }
 }

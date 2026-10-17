@@ -46,7 +46,10 @@
         startWindowBackground: '$color:start_window_background',
         exported: true,
         orientation: 'auto_rotation_landscape',
-        supportWindowMode: ['fullscreen', 'split'],
+        // 小窗模式：支持悬浮窗，并声明为横屏多窗布局（横屏游戏配 landscape，
+        // 手机上触发出的是横向悬浮窗，折叠屏展开态可形成上下分屏）。
+        supportWindowMode: ['fullscreen', 'split', 'floating'],
+        preferMultiWindowOrientation: 'landscape',
         skills: [
           {
             entities: ['entity.system.home'],

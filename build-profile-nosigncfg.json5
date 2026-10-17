@@ -6,8 +6,9 @@
       {
         name: 'default',
         signingConfig: 'default',
-        targetSdkVersion: '6.0.0(20)',
-        compatibleSdkVersion: '6.0.1(21)',
+        // 原文件把 compatible 与 target 写反了（21 > 20），hvigor 会直接拒绝构建。
+        targetSdkVersion: '6.0.1(21)',
+        compatibleSdkVersion: '6.0.0(20)',
         runtimeOS: 'HarmonyOS',
         buildOption: {
           nativeCompiler: 'BiSheng',
