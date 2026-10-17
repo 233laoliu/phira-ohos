@@ -17,9 +17,10 @@ env:
   # 本机开发用的是 DevEco 6.0.1.251 / SDK 6.0.1.112 (API 21)，
   # 6.1.x 的 hvigor 向后兼容工程里的 modelVersion 6.0.0。
   CLI_TOOLS_VERSION: '6.1.1.280'
-  # phiraiad（Rust 引擎侧）仓库与提交，对应本地 build-libphira.cmd 使用的版本。
+  # phiraiad（Rust 引擎侧）仓库与分支，对应本地 build-libphira.cmd 使用的版本。
+  # main 当前顶点即 v1.5.2 (a60b49a)。
   PHIRAAD_REPO: 'Adai-add/PhiraiAd'
-  PHIRAAD_REF: 'a60b49a'
+  PHIRAAD_REF: 'main'
   RUST_NIGHTLY: 'nightly-2026-09-14'
 
 jobs:
