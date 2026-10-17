@@ -1,7 +1,7 @@
 import { BusinessError } from "@kit.BasicServicesKit";
 import fs from "@ohos.file.fs";
 import { hilog } from "@kit.PerformanceAnalysisKit";
-import { ChartEntry, ChartSource, DIFFICULTY_NAMES, HttpFile, MIRRORS } from "./ChartSource";
+import { ChartEntry, ChartSource, DIFFICULTY_NAMES, HttpFile } from "./ChartSource";
 import { PezPacker } from "./PezPacker";
 
 const DOMAIN = 0x0000;
@@ -42,21 +42,26 @@ export class ChartDownloader {
     ChartDownloader.removeDir(staging);
     fs.mkdirSync(staging, true);
 
-    onProgress({ stage: `下载谱面 ${diff}`, done: false });
-    const chartText = await ChartDownloader.fetchText(
+    const chartPath = `${staging}/chart.json`;
+    let musicPath = "";
+    let illustrationPath = "";
+
+    // 谱面 json、音乐、曲绘三路并发下载：音乐才是体积大头，串行时总时长是三者之和。
+    // 谱面必须成功（await 时直接抛出，整体失败）；音乐/曲绘各自 catch 兜底，缺了也能打谱。
+    onProgress({ stage: "下载谱面/音乐/曲绘（并行）", done: false });
+    const chartPromise: Promise<void> = ChartDownloader.fetchText(
       ChartSource.chartPath(entry, difficultyIndex),
       "chart",
-    );
-    const chartPath = `${staging}/chart.json`;
-    ChartDownloader.writeText(chartPath, chartText);
-
-    let musicPath = "";
-    try {
-      onProgress({ stage: "下载音乐", done: false });
-      const bytes = await ChartDownloader.fetchBytes(ChartSource.musicPath(entry), BRANCH_MUSIC);
+    ).then((text: string): void => {
+      ChartDownloader.writeText(chartPath, text);
+    });
+    const musicPromise: Promise<void> = ChartDownloader.fetchBytes(
+      ChartSource.musicPath(entry),
+      BRANCH_MUSIC,
+    ).then((bytes: ArrayBuffer): void => {
       musicPath = `${staging}/music.ogg`;
       ChartDownloader.writeBytes(musicPath, bytes);
-    } catch (err) {
+    }).catch((err: BusinessError): void => {
       hilog.warn(
         DOMAIN,
         TAG,
@@ -64,18 +69,14 @@ export class ChartDownloader {
         entry.id,
         JSON.stringify(err),
       );
-    }
-
-    let illustrationPath = "";
-    try {
-      onProgress({ stage: "下载曲绘", done: false });
-      const bytes = await ChartDownloader.fetchBytes(
-        ChartSource.illustrationPath(entry),
-        BRANCH_ILLUST,
-      );
+    });
+    const illustrationPromise: Promise<void> = ChartDownloader.fetchBytes(
+      ChartSource.illustrationPath(entry),
+      BRANCH_ILLUST,
+    ).then((bytes: ArrayBuffer): void => {
       illustrationPath = `${staging}/illustration.png`;
       ChartDownloader.writeBytes(illustrationPath, bytes);
-    } catch (err) {
+    }).catch((err: BusinessError): void => {
       hilog.warn(
         DOMAIN,
         TAG,
@@ -83,7 +84,10 @@ export class ChartDownloader {
         entry.id,
         JSON.stringify(err),
       );
-    }
+    });
+    await chartPromise;
+    await musicPromise;
+    await illustrationPromise;
 
     onProgress({ stage: "写入谱面信息", done: false });
     const infoPath = `${staging}/info.yml`;
@@ -122,7 +126,30 @@ export class ChartDownloader {
     onProgress: (progress: DownloadProgress) => void,
   ): Promise<string> {
     onProgress({ stage: "下载谱面包", done: false });
-    const bytes = await HttpFile.get(url, true) as ArrayBuffer;
+    // 钉死了 ghproxy / ghfast 时，raw 直链自动套一层代理；代理失败再回退原链。
+    const candidates: string[] = [];
+    const wrapped = ChartSource.proxyWrap(url);
+    if (wrapped !== "") {
+      candidates.push(wrapped);
+    }
+    candidates.push(url);
+
+    let bytes: ArrayBuffer = new ArrayBuffer(0);
+    let fetched: boolean = false;
+    let lastError = "";
+    for (const candidate of candidates) {
+      try {
+        bytes = await HttpFile.get(candidate, true) as ArrayBuffer;
+        fetched = true;
+        break;
+      } catch (err) {
+        lastError = (err as BusinessError).message ?? JSON.stringify(err);
+        hilog.warn(DOMAIN, TAG, "Download %{public}s failed. Cause: %{public}s", candidate, lastError);
+      }
+    }
+    if (!fetched) {
+      throw new Error(lastError);
+    }
     const pezPath = `${workDir}/${ChartDownloader.sanitize(fileName)}.pez`;
     if (fs.accessSync(pezPath)) {
       fs.unlinkSync(pezPath);
@@ -156,16 +183,8 @@ export class ChartDownloader {
   }
 
   private static async fetchBytes(path: string, branch: string): Promise<ArrayBuffer> {
-    let lastError = "";
-    for (const mirror of MIRRORS) {
-      const url = ChartSource.url(mirror, branch, path);
-      try {
-        return await HttpFile.get(url, true) as ArrayBuffer;
-      } catch (err) {
-        lastError = (err as BusinessError).message ?? JSON.stringify(err);
-      }
-    }
-    throw new Error(lastError);
+    // 镜像顺序（含用户钉死的源）统一由 ChartSource 决定。
+    return await ChartSource.fetchBytesAnyMirror(branch, path);
   }
 
   private static writeText(path: string, text: string): void {

@@ -1,11 +1,17 @@
 import { hilog } from "@kit.PerformanceAnalysisKit";
 import { BusinessError } from "@kit.BasicServicesKit";
+import fs from "@ohos.file.fs";
 import { ChartDownloader, DownloadProgress } from "../utils/ChartDownloader";
-import { ChartEntry, ChartSource, DIFFICULTY_NAMES } from "../utils/ChartSource";
+import { ChartEntry, ChartSource, DIFFICULTY_NAMES, MIRRORS, MIRROR_LABELS } from "../utils/ChartSource";
 
 const DOMAIN = 0x0000;
 const TAG = "PhiraChartPanel";
 const MAX_VISIBLE: number = 120;
+
+interface MirrorOption {
+  key: string;
+  label: string;
+}
 
 /**
  * 谱面下载面板。
@@ -20,6 +26,7 @@ export struct ChartDownloadPanel {
   @State loading: boolean = true;
   @State loadError: string = "";
   @State keyword: string = "";
+  @State mirror: string = "";
   @State stage: string = "";
   @State busy: boolean = false;
   @State directUrl: string = "";
@@ -28,7 +35,71 @@ export struct ChartDownloadPanel {
   onClose: () => void = (): void => {};
 
   aboutToAppear(): void {
+    this.loadMirrorPref();
     this.loadCatalog();
+  }
+
+  /**
+   * 读取上次钉死的下载源（workDir/mirror.cfg），避免每次进面板都要重选。
+   * 文件不存在或内容非法时保持"自动"。
+   */
+  private loadMirrorPref(): void {
+    try {
+      const cfg = `${this.workDir}/mirror.cfg`;
+      if (!fs.accessSync(cfg)) {
+        return;
+      }
+      const file = fs.openSync(cfg, fs.OpenMode.READ_ONLY);
+      try {
+        const buffer = new ArrayBuffer(32);
+        const read = fs.readSync(file.fd, buffer);
+        const view = new Uint8Array(buffer);
+        let name = "";
+        for (let i = 0; i < read; i++) {
+          name += String.fromCharCode(view[i]);
+        }
+        if (MIRRORS.includes(name)) {
+          this.mirror = name;
+          ChartSource.setPreferredMirror(name);
+          hilog.info(DOMAIN, TAG, "Preferred mirror restored: %{public}s", name);
+        }
+      } finally {
+        fs.closeSync(file);
+      }
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, "Failed to read mirror pref. Cause: %{public}s", JSON.stringify(err));
+    }
+  }
+
+  /**
+   * 钉死下载源：写进 mirror.cfg 持久化，之后目录与谱面下载都优先走它。
+   * "自动"（空串）时写空文件，读取时自然回落到默认顺序。
+   */
+  private selectMirror(key: string): void {
+    this.mirror = key;
+    ChartSource.setPreferredMirror(key);
+    try {
+      const cfg = `${this.workDir}/mirror.cfg`;
+      if (fs.accessSync(cfg)) {
+        fs.unlinkSync(cfg);
+      }
+      const file = fs.openSync(cfg, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.TRUNC);
+      try {
+        fs.writeSync(file.fd, key);
+      } finally {
+        fs.closeSync(file);
+      }
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, "Failed to persist mirror pref. Cause: %{public}s", JSON.stringify(err));
+    }
+  }
+
+  private mirrorOptions(): MirrorOption[] {
+    const options: MirrorOption[] = [{ key: "", label: "自动" }];
+    for (const mirror of MIRRORS) {
+      options.push({ key: mirror, label: MIRROR_LABELS.get(mirror) ?? mirror });
+    }
+    return options;
   }
 
   private async loadCatalog(): Promise<void> {
@@ -159,6 +230,28 @@ export struct ChartDownloadPanel {
         .onChange((value: string) => {
           this.keyword = value;
         })
+
+      // 下载源选择：钉死的源优先尝试，失败自动回退其余源；选择写入 mirror.cfg 持久化。
+      Flex({ wrap: FlexWrap.Wrap }) {
+        Text("下载源")
+          .fontSize(11)
+          .fontColor("#6B7590")
+          .margin({ right: 8, top: 5 });
+        ForEach(this.mirrorOptions(), (option: MirrorOption) => {
+          Text(option.label)
+            .fontSize(11)
+            .fontColor(option.key === this.mirror ? "#0F1119" : "#8FA0C0")
+            .backgroundColor(option.key === this.mirror ? "#0A59F7" : "#1B1E2C")
+            .borderRadius(8)
+            .padding({ left: 8, right: 8, top: 3, bottom: 3 })
+            .margin({ right: 6, top: 2 })
+            .onClick(() => {
+              this.selectMirror(option.key);
+            })
+        }, (option: MirrorOption) => option.key)
+      }
+      .width("100%")
+      .margin({ top: 6 })
 
       Row() {
         TextInput({ placeholder: "或直接粘贴 .pez 下载链接", text: this.directUrl })

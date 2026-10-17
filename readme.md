@@ -4,7 +4,7 @@
 
 ## What's changed
 
-- **在线谱面下载**：导入入口新增"本地文件 / 在线下载"二选一对话框（`ChartDownloadPanel`、`ChartDownloader`、`ChartSource`）。曲目清单来自 Phigros 官谱资源站 `7aGiven/Phigros_Resource`（info / chart / music / illustration 四个分支），支持 raw、jsdelivr、ghfast、ghproxy 等多镜像自动回退；下载到的谱面 JSON、音频 ogg、曲绘 png 由 `PezPacker` 打包为 `.pez` 后，走与本地导入完全相同的 `setChosenFile` + `markAutoImport` 通道进入原生侧。
+- **在线谱面下载**：导入入口新增"本地文件 / 在线下载"二选一对话框（`ChartDownloadPanel`、`ChartDownloader`、`ChartSource`）。曲目清单来自 Phigros 官谱资源站 `7aGiven/Phigros_Resource`（info / chart / music / illustration 四个分支），默认按 jsdelivr → gcore → ghfast → ghproxy → raw 的顺序自动回退，也可在面板里钉死某一个源（ghproxy 等，选择持久化，指定源优先、失败仍回退）；谱面 JSON、音频 ogg、曲绘 png 三路并行下载，下载完成的资源由 `PezPacker` 打包为 `.pez`，走与本地导入完全相同的 `setChosenFile` + `markAutoImport` 通道进入原生侧。
 - **修复下载导入失败（os error 2）**：`@ohos.zlib` 的 `compressFiles` 会在 `.pez` 真正落盘之前就 resolve Promise，原生侧紧接着 `File::open` 报 ENOENT（已用 hilog 记录时间戳证实：Promise resolve 与原生打开之间只差约 15ms，文件尚未写完）。改为纯 ArkTS 手写的 ZIP 打包器 `PezPacker.ets`（STORE 存储 + CRC-32 校验，同步写盘并自校验字节数），摆脱 zlib 的 Promise 时序问题。
 - **小窗 / 分屏适配**：新增 `WindowModeManager`，按当前窗口形态切换沉浸式与窗口化，窗口尺寸变化时持续跟随（悬浮窗、分屏来回切换均自动生效）；`module.json5` 声明 `supportWindowMode: ['fullscreen', 'split', 'floating']` 与 `preferMultiWindowOrientation: 'landscape'`。
 - **游戏模式**：新增 `GameModeManager`，订阅原生 `interceptor_state` 信号（等价于"正在游玩"），游玩期间保持屏幕常亮等行为。

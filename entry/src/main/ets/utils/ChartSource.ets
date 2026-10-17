@@ -25,8 +25,21 @@ const BRANCH_ILLUSTRATION: string = "illustration";
 
 export const DIFFICULTY_NAMES: string[] = ["EZ", "HD", "IN", "AT"];
 
-/** 镜像源，越靠前优先级越高，失败时依次回退。 */
-export const MIRRORS: string[] = ["raw", "jsdelivr", "jsdelivr-gcore", "ghfast", "ghproxy"];
+/**
+ * 镜像源，越靠前优先级越高，失败时依次回退。
+ * jsdelivr / gcore 是全球 CDN，通常比 raw 直连快；ghproxy / ghfast 是国内可达的
+ * GitHub 代理；raw 放最后兜底。用户还可以在下载面板里钉死某一个源（见 ChartSource.preferred）。
+ */
+export const MIRRORS: string[] = ["jsdelivr", "jsdelivr-gcore", "ghfast", "ghproxy", "raw"];
+
+/** 镜像源在界面上的显示名。 */
+export const MIRROR_LABELS: Map<string, string> = new Map([
+  ["raw", "raw"],
+  ["jsdelivr", "jsdelivr"],
+  ["jsdelivr-gcore", "gcore"],
+  ["ghfast", "ghfast"],
+  ["ghproxy", "ghproxy"],
+]);
 
 export interface ChartEntry {
   id: string;
@@ -43,6 +56,49 @@ export interface ChartEntry {
 }
 
 export class ChartSource {
+  /** 用户钉死的镜像（"" = 自动，按 MIRRORS 顺序回退）。 */
+  private static preferred: string = "";
+
+  static setPreferredMirror(name: string): void {
+    ChartSource.preferred = MIRRORS.includes(name) ? name : "";
+  }
+
+  static getPreferredMirror(): string {
+    return ChartSource.preferred;
+  }
+
+  /**
+   * 把 raw.githubusercontent.com 的链接套一层当前钉死的代理。
+   * 只有 ghproxy / ghfast 是"包住任意 URL"的形式；jsdelivr 需要 @分支/路径 结构，
+   * 套不了直链，返回 ""。钉了别的源或本来就不是 raw 链接时同样返回 ""。
+   */
+  static proxyWrap(url: string): string {
+    if (!url.startsWith("https://raw.githubusercontent.com/")) {
+      return "";
+    }
+    if (ChartSource.preferred === "ghproxy") {
+      return `https://ghproxy.net/${url}`;
+    }
+    if (ChartSource.preferred === "ghfast") {
+      return `https://ghfast.top/${url}`;
+    }
+    return "";
+  }
+
+  /** 实际尝试顺序：钉死的源排最前，其余按默认顺序兜底（钉死的源挂了也不会硬失败）。 */
+  private static order(): string[] {
+    if (ChartSource.preferred === "") {
+      return MIRRORS;
+    }
+    const rest: string[] = [];
+    for (const mirror of MIRRORS) {
+      if (mirror !== ChartSource.preferred) {
+        rest.push(mirror);
+      }
+    }
+    return [ChartSource.preferred, ...rest];
+  }
+
   /** 拼接某个镜像下指定分支文件的下载地址。 */
   static url(mirror: string, branch: string, path: string): string {
     const base = `${REPO_OWNER}/${REPO_NAME}`;
@@ -85,12 +141,14 @@ export class ChartSource {
   }
 
   /**
-   * 拉取曲目清单。两条 tsv 都按"任一镜像成功即止"的策略获取，
+   * 拉取曲目清单。两条 tsv 并发拉（各按"任一镜像成功即止"的策略获取），
    * 未配置 token 时完全依赖镜像直连，不需要访问 GitHub API，也就没有限流问题。
    */
   static async loadCatalog(): Promise<ChartEntry[]> {
-    const difficulty = await ChartSource.fetchTextAnyMirror(BRANCH_INFO, "difficulty.tsv");
-    const info = await ChartSource.fetchTextAnyMirror(BRANCH_INFO, "info.tsv");
+    const difficultyPromise = ChartSource.fetchTextAnyMirror(BRANCH_INFO, "difficulty.tsv");
+    const infoPromise = ChartSource.fetchTextAnyMirror(BRANCH_INFO, "info.tsv");
+    const difficulty = await difficultyPromise;
+    const info = await infoPromise;
     return ChartSource.parseCatalog(difficulty, info);
   }
 
@@ -125,7 +183,7 @@ export class ChartSource {
         illustrator: cols[7] ?? "",
       });
     }
-    entries.sort((a: ChartEntry, b: ChartEntry) => {
+    entries.sort((a: ChartEntry, b: ChartEntry): number => {
       return a.name.localeCompare(b.name);
     });
     return entries;
@@ -134,17 +192,32 @@ export class ChartSource {
   private static lines(text: string): string[] {
     return text
       .split("\n")
-      .map((it: string) => it.trim())
-      .filter((it: string) => it.length > 0);
+      .map((it: string): string => it.trim())
+      .filter((it: string): boolean => it.length > 0);
   }
 
   /** 依次尝试各镜像，返回首个成功拿到的文本内容。 */
   static async fetchTextAnyMirror(branch: string, path: string): Promise<string> {
     let lastError = "";
-    for (const mirror of MIRRORS) {
+    for (const mirror of ChartSource.order()) {
       const url = ChartSource.url(mirror, branch, path);
       try {
         return await HttpFile.get(url, false) as string;
+      } catch (err) {
+        lastError = (err as BusinessError).message ?? JSON.stringify(err);
+        hilog.warn(DOMAIN, TAG, "Fetch %{public}s via %{public}s failed", path, mirror);
+      }
+    }
+    throw new Error(`无法获取 ${path}：${lastError}`);
+  }
+
+  /** 二进制版本（音乐 / 曲绘），同样带镜像回退。 */
+  static async fetchBytesAnyMirror(branch: string, path: string): Promise<ArrayBuffer> {
+    let lastError = "";
+    for (const mirror of ChartSource.order()) {
+      const url = ChartSource.url(mirror, branch, path);
+      try {
+        return await HttpFile.get(url, true) as ArrayBuffer;
       } catch (err) {
         lastError = (err as BusinessError).message ?? JSON.stringify(err);
         hilog.warn(DOMAIN, TAG, "Fetch %{public}s via %{public}s failed", path, mirror);
